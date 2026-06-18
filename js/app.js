@@ -172,25 +172,28 @@ function renderNameGate(canCancel) {
     <h1 class="app-title">Снайперская подготовка</h1>
     <p class="app-sub">Вход</p>
     <p class="gate-hint">Введи имя и фамилию — по ним учитывается твой прогресс.</p>
-    <input class="text-input" id="fio" placeholder="Имя Фамилия" autocomplete="name"
-      value="${esc(getUser())}" maxlength="60">
-    <div class="gate-err" id="err"></div>
-    <button class="btn btn-primary" id="enter"><div class="btn-title">Войти →</div></button>
+    <form id="nameform" autocomplete="on">
+      <input class="text-input" id="fio" type="text" name="name" placeholder="Имя Фамилия"
+        value="${esc(getUser())}" maxlength="60"
+        autocomplete="name" autocapitalize="words" autocorrect="off" spellcheck="false"
+        enterkeyhint="go" inputmode="text">
+      <div class="gate-err" id="err"></div>
+      <button class="btn btn-primary" type="submit"><div class="btn-title">Войти →</div></button>
+    </form>
     ${canCancel ? '<button class="btn" id="cancel"><div class="btn-title">← Назад</div></button>' : ''}
   `;
   const inp = document.getElementById('fio');
-  inp.focus();
   const submit = () => {
     const v = inp.value.trim().replace(/\s+/g, ' ');
-    if (v.split(' ').length < 2 || v.length < 3) {
-      document.getElementById('err').textContent = 'Нужно имя и фамилия (два слова).';
+    if (v.length < 2) {
+      document.getElementById('err').textContent = 'Введи имя (можно с фамилией).';
+      inp.focus();
       return;
     }
     setUser(v);
     renderHome();
   };
-  document.getElementById('enter').onclick = submit;
-  inp.addEventListener('keydown', e => { if (e.key === 'Enter') submit(); });
+  document.getElementById('nameform').addEventListener('submit', e => { e.preventDefault(); submit(); });
   if (canCancel) document.getElementById('cancel').onclick = renderHome;
 }
 
