@@ -7,6 +7,40 @@ const app = document.getElementById('app');
 const LETTERS = ['А', 'Б', 'В', 'Г', 'Д'];
 let S = null; // текущая сессия (режим прохождения)
 
+/* ============ Аналитика ============ */
+const ANALYTICS_URL = (window.SNIPING_CONFIG && window.SNIPING_CONFIG.analyticsUrl) || '';
+let USER = '';
+
+function getUser() { try { return localStorage.getItem('userName') || ''; } catch (e) { return ''; } }
+function setUser(n) { try { localStorage.setItem('userName', n); } catch (e) {} USER = n; }
+
+function loadQueue() { try { return JSON.parse(localStorage.getItem('aq')) || []; } catch (e) { return []; } }
+function saveQueue(q) { try { localStorage.setItem('aq', JSON.stringify(q)); } catch (e) {} }
+
+// записать событие-ответ в очередь; батчем уходит на сервер
+function logEvent(mode, themeId, questionId, correct) {
+  if (!ANALYTICS_URL) return;
+  const q = loadQueue();
+  q.push({ name: USER || getUser(), mode: mode, themeId: themeId, questionId: questionId, correct: correct ? 1 : 0 });
+  saveQueue(q);
+  if (q.length >= 8) flushQueue(); // отправляем пачками
+}
+
+function flushQueue(useBeacon) {
+  if (!ANALYTICS_URL) return;
+  const q = loadQueue();
+  if (!q.length) return;
+  saveQueue([]); // оптимистично очищаем
+  const body = JSON.stringify({ events: q });
+  if (useBeacon && navigator.sendBeacon) { navigator.sendBeacon(ANALYTICS_URL, body); return; }
+  fetch(ANALYTICS_URL, { method: 'POST', body: body, keepalive: true })
+    .catch(() => { const cur = loadQueue(); saveQueue(q.concat(cur)); }); // вернуть при ошибке
+}
+
+// дослать очередь при сворачивании/закрытии
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') flushQueue(true); });
+window.addEventListener('pagehide', () => flushQueue(true));
+
 /* ============ Утилиты ============ */
 function shuffle(arr) {
   const a = arr.slice();
@@ -116,12 +150,115 @@ function renderHome() {
       <div class="btn-row"><span class="btn-title">❗ Работа над ошибками</span><span class="count">${missCount}</span></div>
       <div class="btn-desc">${missCount ? 'Вопросы, где ты чаще всего ошибаешься' : 'Пока ошибок нет — копятся по мере прохождения'}</div>
     </button>
-    <p class="footnote">Прогресс хранится только на этом устройстве.</p>
+    <p class="footnote">Вошёл как <b>${esc(USER || '—')}</b> · <span class="link-btn" id="rename">сменить</span> · <span class="link-btn" id="adminlink">админ</span></p>
   `;
   document.getElementById('exam').onclick = startExam;
   document.getElementById('themes').onclick = renderThemeList;
   document.getElementById('repeat').onclick = renderRepeatMenu;
   if (missCount) document.getElementById('mistakes').onclick = startMistakes;
+  document.getElementById('rename').onclick = () => renderNameGate(true);
+  document.getElementById('adminlink').onclick = renderAdminLogin;
+}
+
+/* ============ Экран входа (Имя Фамилия) ============ */
+function renderNameGate(canCancel) {
+  app.innerHTML = `
+    <img class="brand-logo" src="./icons/logo.png" alt="Логотип">
+    <h1 class="app-title">Снайперская подготовка</h1>
+    <p class="app-sub">Вход</p>
+    <p class="gate-hint">Введи имя и фамилию — по ним учитывается твой прогресс.</p>
+    <input class="text-input" id="fio" placeholder="Имя Фамилия" autocomplete="name"
+      value="${esc(getUser())}" maxlength="60">
+    <div class="gate-err" id="err"></div>
+    <button class="btn btn-primary" id="enter"><div class="btn-title">Войти →</div></button>
+    ${canCancel ? '<button class="btn" id="cancel"><div class="btn-title">← Назад</div></button>' : ''}
+  `;
+  const inp = document.getElementById('fio');
+  inp.focus();
+  const submit = () => {
+    const v = inp.value.trim().replace(/\s+/g, ' ');
+    if (v.split(' ').length < 2 || v.length < 3) {
+      document.getElementById('err').textContent = 'Нужно имя и фамилия (два слова).';
+      return;
+    }
+    setUser(v);
+    renderHome();
+  };
+  document.getElementById('enter').onclick = submit;
+  inp.addEventListener('keydown', e => { if (e.key === 'Enter') submit(); });
+  if (canCancel) document.getElementById('cancel').onclick = renderHome;
+}
+
+/* ============ Дашборд «Админ» ============ */
+function renderAdminLogin() {
+  app.innerHTML = `
+    <div class="topbar"><button class="back-btn" id="back">← Меню</button><h2>Админ</h2></div>
+    <p class="gate-hint">Пароль для просмотра результатов всех пользователей.</p>
+    <input class="text-input" id="pw" type="password" placeholder="Пароль" autocomplete="off">
+    <div class="gate-err" id="err"></div>
+    <button class="btn btn-primary" id="go"><div class="btn-title">Показать сводку</div></button>
+  `;
+  document.getElementById('back').onclick = renderHome;
+  const inp = document.getElementById('pw'); inp.focus();
+  const go = () => {
+    const pw = inp.value;
+    if (!pw) return;
+    if (!ANALYTICS_URL) { document.getElementById('err').textContent = 'Аналитика не настроена.'; return; }
+    document.getElementById('err').textContent = 'Загружаю…';
+    fetch(ANALYTICS_URL + '?secret=' + encodeURIComponent(pw))
+      .then(r => r.json())
+      .then(d => {
+        if (!d.ok) { document.getElementById('err').textContent = 'Неверный пароль.'; return; }
+        renderAdminDashboard(d.rows);
+      })
+      .catch(() => { document.getElementById('err').textContent = 'Ошибка загрузки.'; });
+  };
+  document.getElementById('go').onclick = go;
+  inp.addEventListener('keydown', e => { if (e.key === 'Enter') go(); });
+}
+
+function renderAdminDashboard(rows) {
+  // rows[0] — заголовок; далее [ts, name, mode, themeId, questionId, correct]
+  const data = rows.slice(1);
+  const byUser = {};
+  data.forEach(r => {
+    const name = r[1] || '—', mode = r[2], theme = String(r[3]), correct = Number(r[5]) === 1, ts = r[0];
+    if (!byUser[name]) byUser[name] = { total: 0, correct: 0, themes: {}, last: '', modes: {} };
+    const u = byUser[name];
+    u.total++; if (correct) u.correct++;
+    u.modes[mode] = (u.modes[mode] || 0) + 1;
+    if (!u.themes[theme]) u.themes[theme] = { t: 0, c: 0 };
+    u.themes[theme].t++; if (correct) u.themes[theme].c++;
+    if (ts > u.last) u.last = ts;
+  });
+
+  const names = Object.keys(byUser).sort((a, b) => byUser[b].total - byUser[a].total);
+  const themeName = id => { const t = DATA.themes.find(t => String(t.id) === String(id)); return t ? t.title : ('Тема ' + id); };
+  const fmtDate = s => { try { return new Date(s).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }); } catch (e) { return ''; } };
+
+  const cards = names.map(n => {
+    const u = byUser[n];
+    const pct = u.total ? Math.round(u.correct / u.total * 100) : 0;
+    const themesHtml = Object.keys(u.themes).sort((a, b) => Number(a) - Number(b)).map(tid => {
+      const th = u.themes[tid]; const p = Math.round(th.c / th.t * 100);
+      return `<div class="adm-theme"><span>${esc(themeName(tid))}</span><span class="adm-th-num">${th.c}/${th.t} · ${p}%</span></div>`;
+    }).join('');
+    return `
+      <div class="admin-card">
+        <div class="adm-head"><span class="adm-name">${esc(n)}</span><span class="adm-pct">${pct}%</span></div>
+        <div class="adm-sub">Ответов: ${u.total} · верно: ${u.correct} · ${fmtDate(u.last)}</div>
+        <div class="adm-themes">${themesHtml}</div>
+      </div>`;
+  }).join('');
+
+  app.innerHTML = `
+    <div class="topbar"><button class="back-btn" id="back">← Меню</button><h2>Сводка</h2></div>
+    <p class="gate-hint">Пользователей: ${names.length} · всего ответов: ${data.length}</p>
+    <button class="btn" id="refresh"><div class="btn-title">↻ Обновить</div></button>
+    ${cards || '<p class="gate-hint">Пока нет данных.</p>'}
+  `;
+  document.getElementById('back').onclick = renderHome;
+  document.getElementById('refresh').onclick = renderAdminLogin;
 }
 
 /* ============ Меню «Темы» ============ */
@@ -307,6 +444,7 @@ function selectOption(i) {
   if (S.mode === 'theme' && ok) p.solved[q.id] = 1;
   recordInto(p, q.id, ok);        // статистика ошибок — во всех режимах с проверкой
   saveProgress(p);
+  logEvent(S.mode, q.themeId, q.id, ok);   // аналитика
   if (S.mode === 'theme') saveSession();
   renderQuestion();
 }
@@ -346,6 +484,7 @@ function finishTheme() {
   const perfect = correct === total;
   if (perfect) { const p = loadProgress(); p.perfect[S.themeId] = 1; saveProgress(p); }
   clearSession(S.themeId);
+  flushQueue();
   const themeId = S.themeId, title = S.title;
   app.innerHTML = `
     <h1 class="app-title">${esc(title)}</h1>
@@ -365,6 +504,8 @@ function finishExam() {
   const pr = loadProgress();
   S.questions.forEach((q, i) => recordInto(pr, q.id, S.answers[i] === q.correct));
   saveProgress(pr);
+  S.questions.forEach((q, i) => logEvent('exam', q.themeId, q.id, S.answers[i] === q.correct)); // аналитика
+  flushQueue();
   let correct = 0;
   S.questions.forEach((q, i) => { if (S.answers[i] === q.correct) correct++; });
   const total = S.questions.length;
@@ -413,6 +554,7 @@ function finishMistakes() {
   const correct = correctCount();
   const pct = Math.round(correct / total * 100);
   const left = mistakeIds(loadProgress()).length;
+  flushQueue();
   app.innerHTML = `
     <h1 class="app-title">Работа над ошибками</h1>
     <div class="result-score">${correct}/${total}</div>
@@ -429,7 +571,7 @@ function finishMistakes() {
 /* ============ Загрузка ============ */
 fetch('./data/questions.json')
   .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
-  .then(d => { DATA = d; renderHome(); })
+  .then(d => { DATA = d; USER = getUser(); USER ? renderHome() : renderNameGate(); })
   .catch(err => { app.innerHTML = `<div class="loading">Ошибка загрузки вопросов:<br>${esc(err.message)}</div>`; });
 
 if ('serviceWorker' in navigator) {

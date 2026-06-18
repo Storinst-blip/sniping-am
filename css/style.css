@@ -212,3 +212,30 @@ html, body {
 
 .spacer { height: 14px; }
 .footnote { text-align: center; color: var(--muted); font-size: 0.78rem; margin-top: 28px; }
+.link-btn { color: var(--gold); cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
+
+/* ===== Поля ввода / экран входа ===== */
+.text-input {
+  display: block; width: 100%;
+  background: var(--surface); color: var(--text);
+  border: 1px solid var(--border); border-radius: 12px;
+  padding: 15px 16px; font-size: 1.05rem; font-family: inherit;
+  margin-bottom: 12px;
+}
+.text-input:focus { outline: none; border-color: var(--gold); }
+.gate-hint { color: var(--muted); font-size: 0.9rem; margin: 4px 4px 16px; line-height: 1.4; }
+.gate-err { color: var(--wrong); font-size: 0.88rem; min-height: 18px; margin: 0 4px 10px; }
+
+/* ===== Дашборд «Админ» ===== */
+.admin-card {
+  border: 1px solid var(--border); border-radius: 12px;
+  background: var(--surface); padding: 14px 16px; margin-bottom: 12px;
+}
+.adm-head { display: flex; justify-content: space-between; align-items: baseline; }
+.adm-name { font-weight: 700; color: var(--gold-bright); font-size: 1.05rem; }
+.adm-pct { font-weight: 800; color: var(--gold); font-size: 1.15rem; }
+.adm-sub { color: var(--muted); font-size: 0.82rem; margin: 4px 0 10px; }
+.adm-themes { display: flex; flex-direction: column; gap: 5px; }
+.adm-theme { display: flex; justify-content: space-between; font-size: 0.88rem; border-top: 1px solid var(--border); padding-top: 5px; }
+.adm-theme > span:first-child { color: var(--text); }
+.adm-th-num { color: var(--muted); white-space: nowrap; margin-left: 10px; }
