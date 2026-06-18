@@ -165,6 +165,28 @@ html, body {
   color: var(--muted); font-size: 0.88rem; line-height: 1.45;
 }
 
+/* ===== Карточки ===== */
+.flashcard {
+  border: 1px solid var(--gold-dim);
+  background: linear-gradient(180deg, #1c1d12, #131309);
+  border-radius: 18px;
+  padding: 28px 22px;
+  min-height: 230px;
+  display: flex; flex-direction: column; justify-content: center; align-items: center;
+  text-align: center; cursor: pointer; margin-bottom: 4px;
+  animation: cardIn .18s ease;
+}
+.flashcard.back { cursor: default; align-items: stretch; justify-content: flex-start; text-align: left; }
+@keyframes cardIn { from { opacity: .35; transform: scale(.97); } to { opacity: 1; transform: scale(1); } }
+.card-q { font-size: 1.35rem; font-weight: 700; line-height: 1.35; margin: 14px 0; }
+.card-hint { color: var(--muted); font-size: 0.85rem; margin-top: 10px; }
+.card-label { text-transform: uppercase; letter-spacing: 1.5px; font-size: 0.74rem; color: var(--gold); margin-bottom: 10px; }
+.card-a { font-size: 1.22rem; font-weight: 600; line-height: 1.4; margin: 0 0 14px; color: var(--gold-bright); }
+.card-no { border-color: var(--wrong); }
+.card-no .btn-title { color: var(--wrong); justify-content: center; }
+.card-yes { border-color: var(--correct); }
+.card-yes .btn-title { color: var(--correct); justify-content: center; }
+
 /* ===== Навигация по вопросам ===== */
 .nav-row { display: flex; gap: 10px; margin-top: 16px; }
 .nav-row .nav-btn { flex: 1; margin-bottom: 0; }

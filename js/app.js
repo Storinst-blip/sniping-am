@@ -146,6 +146,10 @@ function renderHome() {
       <div class="btn-title">🔄 Повторение</div>
       <div class="btn-desc">Бесконечный поток вопросов для зубрёжки</div>
     </button>
+    <button class="btn btn-primary" id="cards">
+      <div class="btn-title">🃏 Карточки</div>
+      <div class="btn-desc">Заучивание: вспомни ответ и проверь себя</div>
+    </button>
     <button class="btn btn-mistakes" id="mistakes" ${missCount ? '' : 'disabled'}>
       <div class="btn-row"><span class="btn-title">❗ Работа над ошибками</span><span class="count">${missCount}</span></div>
       <div class="btn-desc">${missCount ? 'Вопросы, где ты чаще всего ошибаешься' : 'Пока ошибок нет — копятся по мере прохождения'}</div>
@@ -155,6 +159,7 @@ function renderHome() {
   document.getElementById('exam').onclick = startExam;
   document.getElementById('themes').onclick = renderThemeList;
   document.getElementById('repeat').onclick = renderRepeatMenu;
+  document.getElementById('cards').onclick = renderCardsMenu;
   if (missCount) document.getElementById('mistakes').onclick = startMistakes;
   document.getElementById('rename').onclick = () => renderNameGate(true);
   document.getElementById('adminlink').onclick = renderAdminLogin;
@@ -327,6 +332,100 @@ function startExam() {
   const questions = pool.map(prepareQuestion);
   S = { mode: 'exam', questions, answers: new Array(questions.length).fill(null), idx: 0 };
   renderQuestion();
+}
+
+/* ============ Меню «Карточки» ============ */
+function renderCardsMenu() {
+  S = null;
+  const themesHtml = DATA.themes.map(t => `
+    <button class="btn" data-theme="${t.id}">
+      <div class="btn-row"><span class="btn-title">${t.id}. ${esc(t.title)}</span><span class="count">${t.questions.length}</span></div>
+    </button>`).join('');
+  app.innerHTML = `
+    <div class="topbar"><button class="back-btn" id="back">← Меню</button><h2>Карточки</h2></div>
+    <div class="mode-desc">🃏 Смотришь вопрос, вспоминаешь ответ в уме, переворачиваешь карточку и проверяешь себя. Активное вспоминание — лучший способ заучить определения.</div>
+    <button class="btn btn-primary" data-theme="all"><div class="btn-title">🔁 Все темы</div></button>
+    <div class="section-label">Или выбери тему</div>
+    ${themesHtml}
+  `;
+  document.getElementById('back').onclick = renderHome;
+  app.querySelectorAll('[data-theme]').forEach(b => {
+    b.onclick = () => startCards(b.dataset.theme === 'all' ? null : Number(b.dataset.theme));
+  });
+}
+
+/* ============ Режим «Карточки» ============ */
+function startCards(themeId) {
+  const pool = themeId == null ? allQuestions() : questionsOfTheme(themeId);
+  const questions = shuffle(pool).map(prepareQuestion);
+  S = { mode: 'cards', themeId: themeId, questions, idx: 0, flipped: false, known: 0, unknown: 0 };
+  renderCard();
+}
+
+function renderCard() {
+  const q = S.questions[S.idx];
+  const answer = q.options[q.correct];
+  const face = S.flipped
+    ? `<div class="flashcard back" id="card">
+         <div class="card-label">Ответ</div>
+         <p class="card-a">${esc(answer)}</p>
+         ${q.explanation ? `<div class="explain"><b>Пояснение.</b> ${esc(q.explanation)}</div>` : ''}
+       </div>`
+    : `<div class="flashcard" id="card">
+         <span class="theme-tag">${esc(q.theme)}</span>
+         <p class="card-q">${esc(q.q)}</p>
+         <div class="card-hint">👆 нажми, чтобы перевернуть</div>
+       </div>`;
+  app.innerHTML = `
+    <div class="topbar">
+      <button class="back-btn" id="back">← Меню</button>
+      <span class="progress">${S.idx + 1} / ${S.questions.length} · 😎 ${S.known} 😕 ${S.unknown}</span>
+    </div>
+    ${face}
+    ${S.flipped ? `
+      <div class="nav-row">
+        <button class="btn nav-btn card-no" id="no"><div class="btn-title">😕 Не знал</div></button>
+        <button class="btn nav-btn card-yes" id="yes"><div class="btn-title">😎 Знал</div></button>
+      </div>` : ''}
+  `;
+  document.getElementById('back').onclick = renderHome;
+  if (!S.flipped) {
+    document.getElementById('card').onclick = () => { S.flipped = true; renderCard(); };
+  } else {
+    document.getElementById('no').onclick = () => cardAnswer(false);
+    document.getElementById('yes').onclick = () => cardAnswer(true);
+  }
+}
+
+function cardAnswer(known) {
+  const q = S.questions[S.idx];
+  if (known) S.known++; else S.unknown++;
+  const p = loadProgress();
+  recordInto(p, q.id, known);     // «не знал» попадёт в работу над ошибками
+  saveProgress(p);
+  logEvent('cards', q.themeId, q.id, known);
+  S.idx++;
+  S.flipped = false;
+  if (S.idx >= S.questions.length) finishCards();
+  else renderCard();
+}
+
+function finishCards() {
+  flushQueue();
+  const total = S.known + S.unknown;
+  const pct = total ? Math.round(S.known / total * 100) : 0;
+  const themeId = S.themeId;
+  app.innerHTML = `
+    <h1 class="app-title">Карточки пройдены</h1>
+    <div class="result-score">${S.known}/${total}</div>
+    <div class="result-pct">знал ${pct}%</div>
+    <p class="result-line">${S.unknown === 0 ? '🔥 Всё знал!' : `Не знал: ${S.unknown} — они попали в «Работу над ошибками»`}</p>
+    <button class="btn btn-primary" id="again"><div class="btn-title">↻ Ещё раз</div></button>
+    <button class="btn" id="home"><div class="btn-title">← В меню</div></button>
+  `;
+  window.scrollTo(0, 0);
+  document.getElementById('again').onclick = () => startCards(themeId);
+  document.getElementById('home').onclick = renderHome;
 }
 
 function makeBag(n) { return shuffle(Array.from({ length: n }, (_, i) => i)); }
