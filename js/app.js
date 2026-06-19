@@ -2,7 +2,12 @@
 
 /* ============ Данные ============ */
 let DATA = null;
-const EXAM_SIZE = 30;
+const EXAM_LEVELS = {
+  easy:   { key: 'easy',   title: 'Лёгкий',  count: 10, timeSec: 0,    back: true,  pass: 0 },
+  medium: { key: 'medium', title: 'Средний', count: 30, timeSec: 0,    back: true,  pass: 0 },
+  hard:   { key: 'hard',   title: 'Сложный', count: 50, timeSec: 1500, back: false, pass: 80 }
+};
+let examInterval = null;
 const app = document.getElementById('app');
 const LETTERS = ['А', 'Б', 'В', 'Г', 'Д'];
 let S = null; // текущая сессия (режим прохождения)
@@ -136,7 +141,7 @@ function renderHome() {
     <p class="app-sub">${DATA.themes.length} тем · ${total} вопросов</p>
     <button class="btn btn-primary" id="exam">
       <div class="btn-title">🎯 Экзамен</div>
-      <div class="btn-desc">${EXAM_SIZE} случайных вопросов · разбор ошибок в конце</div>
+      <div class="btn-desc">3 уровня сложности · разбор ошибок в конце</div>
     </button>
     <button class="btn btn-primary" id="themes">
       <div class="btn-row"><span class="btn-title">📚 Темы</span><span class="count">${doneCount} / ${DATA.themes.length}</span></div>
@@ -156,7 +161,7 @@ function renderHome() {
     </button>
     <p class="footnote">Вошёл как <b>${esc(USER || '—')}</b> · <span class="link-btn" id="rename">сменить</span> · <span class="link-btn" id="adminlink">админ</span></p>
   `;
-  document.getElementById('exam').onclick = startExam;
+  document.getElementById('exam').onclick = renderExamSetup;
   document.getElementById('themes').onclick = renderThemeList;
   document.getElementById('repeat').onclick = renderRepeatMenu;
   document.getElementById('cards').onclick = renderCardsMenu;
@@ -171,12 +176,11 @@ function renderNameGate(canCancel) {
     <img class="brand-logo" src="./icons/logo.png" alt="Логотип">
     <h1 class="app-title">Снайперская подготовка</h1>
     <p class="app-sub">Вход</p>
-    <p class="gate-hint">Введи имя и фамилию — по ним учитывается твой прогресс.</p>
-    <form id="nameform" autocomplete="on">
-      <input class="text-input" id="fio" type="text" name="name" placeholder="Имя Фамилия"
+    <p class="gate-hint">Введи имя и фамилию или позывной — по ним учитывается твой прогресс.</p>
+    <form id="nameform">
+      <input class="text-input" id="fio" type="text" name="name" placeholder="Имя Фамилия или позывной"
         value="${esc(getUser())}" maxlength="60"
-        autocomplete="name" autocapitalize="words" autocorrect="off" spellcheck="false"
-        enterkeyhint="go" inputmode="text">
+        autocapitalize="words" autocorrect="off" spellcheck="false" enterkeyhint="go">
       <div class="gate-err" id="err"></div>
       <button class="btn btn-primary" type="submit"><div class="btn-title">Войти →</div></button>
     </form>
@@ -185,9 +189,8 @@ function renderNameGate(canCancel) {
   const inp = document.getElementById('fio');
   const submit = () => {
     const v = inp.value.trim().replace(/\s+/g, ' ');
-    if (v.length < 2) {
-      document.getElementById('err').textContent = 'Введи имя (можно с фамилией).';
-      inp.focus();
+    if (!v) {
+      document.getElementById('err').textContent = 'Введи имя, фамилию или позывной.';
       return;
     }
     setUser(v);
@@ -330,11 +333,58 @@ function renderRepeatMenu() {
 }
 
 /* ============ Запуск режимов ============ */
-function startExam() {
-  const pool = shuffle(allQuestions()).slice(0, Math.min(EXAM_SIZE, allQuestions().length));
+/* ============ Экзамен: выбор сложности ============ */
+function renderExamSetup() {
+  S = null;
+  clearExamTimer();
+  app.innerHTML = `
+    <div class="topbar"><button class="back-btn" id="back">← Меню</button><h2>Экзамен</h2></div>
+    <div class="mode-desc">Выбери уровень. Чем сложнее — тем больше вопросов и жёстче условия.</div>
+    <button class="btn btn-primary lvl" data-l="easy">
+      <div class="btn-title">🟢 Лёгкий</div>
+      <div class="btn-desc">10 вопросов · без таймера · можно листать назад</div>
+    </button>
+    <button class="btn btn-primary lvl" data-l="medium">
+      <div class="btn-title">🟡 Средний</div>
+      <div class="btn-desc">30 вопросов · без таймера · можно листать назад</div>
+    </button>
+    <button class="btn btn-mistakes lvl" data-l="hard">
+      <div class="btn-title">🔴 Сложный</div>
+      <div class="btn-desc">50 вопросов · таймер 25 мин · без возврата · проходной 80%</div>
+    </button>
+  `;
+  document.getElementById('back').onclick = renderHome;
+  app.querySelectorAll('.lvl').forEach(b => { b.onclick = () => startExam(b.dataset.l); });
+}
+
+function startExam(levelKey) {
+  const lvl = EXAM_LEVELS[levelKey] || EXAM_LEVELS.medium;
+  const all = allQuestions();
+  const pool = shuffle(all).slice(0, Math.min(lvl.count, all.length));
   const questions = pool.map(prepareQuestion);
-  S = { mode: 'exam', questions, answers: new Array(questions.length).fill(null), idx: 0 };
+  S = {
+    mode: 'exam', level: lvl, questions,
+    answers: new Array(questions.length).fill(null), idx: 0,
+    timeLeft: lvl.timeSec > 0 ? lvl.timeSec : null
+  };
+  if (lvl.timeSec > 0) startExamTimer();
   renderQuestion();
+}
+
+function fmtTime(sec) {
+  const m = Math.floor(sec / 60), s = sec % 60;
+  return m + ':' + (s < 10 ? '0' : '') + s;
+}
+function clearExamTimer() { if (examInterval) { clearInterval(examInterval); examInterval = null; } }
+function startExamTimer() {
+  clearExamTimer();
+  examInterval = setInterval(() => {
+    if (!S || S.mode !== 'exam' || S.timeLeft == null) { clearExamTimer(); return; }
+    S.timeLeft--;
+    const el = document.getElementById('timer');
+    if (el) { el.textContent = '⏱ ' + fmtTime(Math.max(0, S.timeLeft)); if (S.timeLeft <= 30) el.classList.add('low'); }
+    if (S.timeLeft <= 0) { clearExamTimer(); finishExam(); }
+  }, 1000);
 }
 
 /* ============ Меню «Карточки» ============ */
@@ -476,9 +526,11 @@ function renderQuestion() {
   const reveal = S.mode !== 'exam' && answered; // показать правильность (темы/повторение)
   const last = S.mode !== 'practice' && S.idx === S.questions.length - 1;
 
+  const timerHtml = (S.mode === 'exam' && S.timeLeft != null)
+    ? ` · <span class="timer ${S.timeLeft <= 30 ? 'low' : ''}" id="timer">⏱ ${fmtTime(Math.max(0, S.timeLeft))}</span>` : '';
   const topRight = S.mode === 'practice'
     ? `✔ ${correctCount()} / ${answeredCount()}`
-    : `Вопрос ${S.idx + 1} / ${S.questions.length}`;
+    : `Вопрос ${S.idx + 1} / ${S.questions.length}${timerHtml}`;
   const bar = S.mode === 'practice' ? '' :
     `<div class="progress-bar"><span style="width:${Math.round((S.idx) / S.questions.length * 100)}%"></span></div>`;
   const backLabel = S.mode === 'exam' ? '← Выход' : '← Меню';
@@ -517,7 +569,7 @@ function renderQuestion() {
     <div id="options">${opts}</div>
     ${fb}${expl}
     <div class="nav-row">
-      <button class="btn nav-btn" id="prev" ${S.idx === 0 ? 'disabled' : ''}><div class="btn-title">← Назад</div></button>
+      <button class="btn nav-btn" id="prev" ${(S.idx === 0 || (S.mode === 'exam' && S.level && !S.level.back)) ? 'disabled' : ''}><div class="btn-title">← Назад</div></button>
       ${rightBtn}
     </div>
   `;
@@ -530,7 +582,7 @@ function renderQuestion() {
 }
 
 function onBack() {
-  if (S.mode === 'exam') { if (confirm('Выйти из экзамена? Результат не сохранится.')) renderHome(); }
+  if (S.mode === 'exam') { if (confirm('Выйти из экзамена? Результат не сохранится.')) { clearExamTimer(); renderHome(); } }
   else if (S.mode === 'theme') { saveSession(); renderThemeList(); }
   else renderHome();
 }
@@ -603,6 +655,7 @@ function finishTheme() {
 
 /* ============ Завершение «Экзамена» ============ */
 function finishExam() {
+  clearExamTimer();
   const pr = loadProgress();
   S.questions.forEach((q, i) => recordInto(pr, q.id, S.answers[i] === q.correct));
   saveProgress(pr);
@@ -613,6 +666,11 @@ function finishExam() {
   const total = S.questions.length;
   const pct = Math.round(correct / total * 100);
   const wrong = total - correct;
+  const lvl = S.level || EXAM_LEVELS.medium;
+  const passed = lvl.pass > 0 ? pct >= lvl.pass : null;
+  const headline = passed === null
+    ? (wrong === 0 ? '🎯 Без ошибок! Отлично!' : `Ошибок: ${wrong}`)
+    : (passed ? `✅ СДАЛ (порог ${lvl.pass}%)` : `❌ НЕ СДАЛ (порог ${lvl.pass}%)`);
   const reviewHtml = S.questions.map((q, i) => {
     const your = S.answers[i];
     const ok = your === q.correct;
@@ -630,14 +688,14 @@ function finishExam() {
     <h1 class="app-title">Результат</h1>
     <div class="result-score">${correct}/${total}</div>
     <div class="result-pct">${pct}% правильных</div>
-    <p class="result-line">${wrong === 0 ? '🎯 Без ошибок! Отлично!' : `Ошибок: ${wrong}`}</p>
-    <button class="btn btn-primary" id="again"><div class="btn-title">🎯 Пройти ещё раз</div></button>
+    <p class="result-line">${headline}</p>
+    <button class="btn btn-primary" id="again"><div class="btn-title">🎯 Новый экзамен</div></button>
     <button class="btn" id="home"><div class="btn-title">← В меню</div></button>
     <div class="section-label">Разбор (✔ верно · ✗ ошибка)</div>
     ${reviewHtml}
   `;
   window.scrollTo(0, 0);
-  document.getElementById('again').onclick = startExam;
+  document.getElementById('again').onclick = renderExamSetup;
   document.getElementById('home').onclick = renderHome;
 }
 
