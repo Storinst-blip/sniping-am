@@ -266,6 +266,7 @@ html, body {
   padding: 1px 6px; vertical-align: middle; font-weight: 800;
 }
 .by-ai { font-size: 0.8rem; color: var(--gold); font-weight: 700; }
+.explain.coach { border-left-color: var(--gold-bright); background: #20210f; }
 .gate-hint { color: var(--muted); font-size: 0.9rem; margin: 4px 4px 16px; line-height: 1.4; }
 .gate-err { color: var(--wrong); font-size: 0.88rem; min-height: 18px; margin: 0 4px 10px; }
 

@@ -612,7 +612,7 @@ function showVerdict(ok, by, reason) {
   saveProgress(p);
   logEvent('input', q.themeId, q.id, ok);
   const tag = by === 'ai' ? ' <span class="by-ai">⚡ИИ</span>' : '';
-  const aiReason = reason ? `<div class="explain"><b>Разбор.</b> ${esc(reason)}</div>` : '';
+  const aiReason = reason ? `<div class="explain coach">👨‍🏫 ${esc(reason)}</div>` : '';
   document.getElementById('after').innerHTML = `
     <div class="feedback ${ok ? 'ok' : 'no'}">${ok ? '✔ Верно!' : '✗ Неверно'}${tag}</div>
     ${aiReason}
