@@ -155,6 +155,10 @@ function renderHome() {
       <div class="btn-title">🃏 Карточки</div>
       <div class="btn-desc">Заучивание: вспомни ответ и проверь себя</div>
     </button>
+    <button class="btn btn-primary" id="input">
+      <div class="btn-title">✍️ Ввод ответа <span class="beta">бета</span></div>
+      <div class="btn-desc">Пишешь ответ сам — приложение проверяет по смыслу</div>
+    </button>
     <button class="btn btn-mistakes" id="mistakes" ${missCount ? '' : 'disabled'}>
       <div class="btn-row"><span class="btn-title">❗ Работа над ошибками</span><span class="count">${missCount}</span></div>
       <div class="btn-desc">${missCount ? 'Вопросы, где ты чаще всего ошибаешься' : 'Пока ошибок нет — копятся по мере прохождения'}</div>
@@ -165,6 +169,7 @@ function renderHome() {
   document.getElementById('themes').onclick = renderThemeList;
   document.getElementById('repeat').onclick = renderRepeatMenu;
   document.getElementById('cards').onclick = renderCardsMenu;
+  document.getElementById('input').onclick = renderInputMenu;
   if (missCount) document.getElementById('mistakes').onclick = startMistakes;
   document.getElementById('rename').onclick = () => renderNameGate(true);
   document.getElementById('adminlink').onclick = renderAdminLogin;
@@ -478,6 +483,191 @@ function finishCards() {
   `;
   window.scrollTo(0, 0);
   document.getElementById('again').onclick = () => startCards(themeId);
+  document.getElementById('home').onclick = renderHome;
+}
+
+/* ============ Меню «Ввод ответа» ============ */
+function renderInputMenu() {
+  S = null;
+  const themesHtml = DATA.themes.map(t => `
+    <button class="btn" data-theme="${t.id}">
+      <div class="btn-row"><span class="btn-title">${t.id}. ${esc(t.title)}</span><span class="count">${t.questions.length}</span></div>
+    </button>`).join('');
+  app.innerHTML = `
+    <div class="topbar"><button class="back-btn" id="back">← Меню</button><h2>Ввод ответа</h2></div>
+    <div class="mode-desc">✍️ Пишешь ответ своими словами — приложение проверяет по смыслу (не обязательно дословно). Спорные случаи можно зачесть самому.</div>
+    <button class="btn btn-primary" data-theme="all"><div class="btn-title">🔁 Все темы</div></button>
+    <div class="section-label">Или выбери тему</div>
+    ${themesHtml}
+  `;
+  document.getElementById('back').onclick = renderHome;
+  app.querySelectorAll('[data-theme]').forEach(b => {
+    b.onclick = () => startInput(b.dataset.theme === 'all' ? null : Number(b.dataset.theme));
+  });
+}
+
+/* ============ Текстовый анализ ответа (оффлайн) ============ */
+const RU_STOP = new Set('и в во на с со к по за из от до о об у не ни но а или что это как для при над под же бы ли то так его ее их чем чём также есть быть это того тем при том чтобы'.split(' '));
+function normalizeText(s) {
+  return String(s).toLowerCase().replace(/ё/g, 'е').replace(/[^a-zа-я0-9\s]/gi, ' ').replace(/\s+/g, ' ').trim();
+}
+function levSim(a, b) {
+  if (!a.length && !b.length) return 1;
+  if (!a.length || !b.length) return 0;
+  const d = [];
+  for (let i = 0; i <= a.length; i++) d[i] = [i];
+  for (let j = 0; j <= b.length; j++) d[0][j] = j;
+  for (let i = 1; i <= a.length; i++)
+    for (let j = 1; j <= b.length; j++) {
+      const c = a[i - 1] === b[j - 1] ? 0 : 1;
+      d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + c);
+    }
+  return 1 - d[a.length][b.length] / Math.max(a.length, b.length);
+}
+function stem(w) { return w.slice(0, Math.min(w.length, 6)); }
+function keyCoverage(userNorm, etalon) {
+  const keys = normalizeText(etalon).split(' ').filter(w => w.length >= 4 && !RU_STOP.has(w));
+  if (!keys.length) return 1;
+  const uw = userNorm.split(' ');
+  let m = 0;
+  keys.forEach(k => { const ks = stem(k); if (uw.some(u => { const us = stem(u); return us === ks || u.includes(ks) || ks.includes(us); })) m++; });
+  return m / keys.length;
+}
+// 'yes' | 'no' | 'unsure' | 'empty'
+function checkOffline(userText, q) {
+  const ans = normalizeText(userText);
+  if (!ans) return 'empty';
+  const etRaw = q.options[q.correct];
+  if (levSim(ans, normalizeText(etRaw)) >= 0.8) return 'yes';
+  const cov = keyCoverage(ans, etRaw);
+  if (cov >= 0.6) return 'yes';
+  if (cov <= 0.2) return 'no';
+  return 'unsure';
+}
+// ИИ-проверка спорных случаев (заработает после настройки ключа в Apps Script). Возвращает true/false/null.
+function aiCheck(userText, q) {
+  if (!ANALYTICS_URL) return Promise.resolve(null);
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), 7000);
+  return fetch(ANALYTICS_URL, {
+    method: 'POST', signal: ctrl.signal,
+    body: JSON.stringify({ action: 'check', q: q.q, correct: q.options[q.correct], answer: userText })
+  }).then(r => r.json()).then(d => {
+    clearTimeout(t);
+    if (d && d.action === 'check' && typeof d.correct === 'boolean') return d.correct;
+    return null;
+  }).catch(() => { clearTimeout(t); return null; });
+}
+
+/* ============ Режим «Ввод ответа» ============ */
+function startInput(themeId) {
+  const pool = themeId == null ? allQuestions() : questionsOfTheme(themeId);
+  const questions = shuffle(pool).map(prepareQuestion);
+  S = { mode: 'input', themeId, questions, idx: 0, correct: 0, wrong: 0, locked: false };
+  renderInput();
+}
+
+function renderInput() {
+  const q = S.questions[S.idx];
+  app.innerHTML = `
+    <div class="topbar">
+      <button class="back-btn" id="back">← Меню</button>
+      <span class="progress">${S.idx + 1} / ${S.questions.length} · ✔ ${S.correct}</span>
+    </div>
+    <span class="theme-tag">${esc(q.theme)}</span>
+    <p class="question">${esc(q.q)}</p>
+    <textarea class="answer-input" id="ans" rows="3" placeholder="Напиши ответ своими словами…"
+      autocapitalize="sentences" autocorrect="on"></textarea>
+    <button class="btn btn-primary" id="check"><div class="btn-title">Проверить</div></button>
+    <div id="after"></div>
+  `;
+  document.getElementById('back').onclick = renderHome;
+  const ta = document.getElementById('ans');
+  ta.focus();
+  document.getElementById('check').onclick = () => doCheck(ta.value);
+}
+
+function doCheck(text) {
+  if (S.locked) return;
+  const q = S.questions[S.idx];
+  const off = checkOffline(text, q);
+  if (off === 'empty') { document.getElementById('after').innerHTML = '<div class="gate-err">Напиши ответ.</div>'; return; }
+  S.locked = true;
+  document.getElementById('check').style.display = 'none';
+  document.getElementById('ans').disabled = true;
+
+  if (off === 'yes') return showVerdict(true, 'offline');
+  if (off === 'no') return showVerdict(false, 'offline');
+  // unsure → пробуем ИИ
+  document.getElementById('after').innerHTML = '<div class="gate-hint">Проверяю по смыслу…</div>';
+  aiCheck(text, q).then(res => {
+    if (res === true) return showVerdict(true, 'ai');
+    if (res === false) return showVerdict(false, 'ai');
+    showSelfAssess(); // ИИ недоступен — самооценка
+  });
+}
+
+function showVerdict(ok, by) {
+  const q = S.questions[S.idx];
+  if (ok) S.correct++; else S.wrong++;
+  const p = loadProgress();
+  recordInto(p, q.id, ok);
+  saveProgress(p);
+  logEvent('input', q.themeId, q.id, ok);
+  const tag = by === 'ai' ? ' <span class="by-ai">⚡ИИ</span>' : '';
+  document.getElementById('after').innerHTML = `
+    <div class="feedback ${ok ? 'ok' : 'no'}">${ok ? '✔ Верно!' : '✗ Неверно'}${tag}</div>
+    <div class="explain"><b>Эталон.</b> ${esc(q.options[q.correct])}${q.explanation ? '<br><br>💡 ' + esc(q.explanation) : ''}</div>
+    <button class="btn btn-primary" id="next"><div class="btn-title">${S.idx === S.questions.length - 1 ? 'Завершить' : 'Дальше →'}</div></button>
+  `;
+  document.getElementById('next').onclick = nextInput;
+}
+
+function showSelfAssess() {
+  const q = S.questions[S.idx];
+  document.getElementById('after').innerHTML = `
+    <div class="feedback">🤔 Сравни сам с эталоном:</div>
+    <div class="explain"><b>Эталон.</b> ${esc(q.options[q.correct])}${q.explanation ? '<br><br>💡 ' + esc(q.explanation) : ''}</div>
+    <div class="nav-row">
+      <button class="btn nav-btn card-no" id="sno"><div class="btn-title">Не верно</div></button>
+      <button class="btn nav-btn card-yes" id="syes"><div class="btn-title">Верно</div></button>
+    </div>
+  `;
+  document.getElementById('syes').onclick = () => selfAssess(true);
+  document.getElementById('sno').onclick = () => selfAssess(false);
+}
+function selfAssess(ok) {
+  const q = S.questions[S.idx];
+  if (ok) S.correct++; else S.wrong++;
+  const p = loadProgress();
+  recordInto(p, q.id, ok);
+  saveProgress(p);
+  logEvent('input', q.themeId, q.id, ok);
+  nextInput();
+}
+
+function nextInput() {
+  S.locked = false;
+  S.idx++;
+  if (S.idx >= S.questions.length) finishInput();
+  else renderInput();
+}
+
+function finishInput() {
+  flushQueue();
+  const total = S.correct + S.wrong;
+  const pct = total ? Math.round(S.correct / total * 100) : 0;
+  const themeId = S.themeId;
+  app.innerHTML = `
+    <h1 class="app-title">Ввод ответа</h1>
+    <div class="result-score">${S.correct}/${total}</div>
+    <div class="result-pct">${pct}% верно</div>
+    <p class="result-line">${S.wrong === 0 ? '🔥 Всё верно!' : `Неверно: ${S.wrong} — попали в «Работу над ошибками»`}</p>
+    <button class="btn btn-primary" id="again"><div class="btn-title">↻ Ещё раз</div></button>
+    <button class="btn" id="home"><div class="btn-title">← В меню</div></button>
+  `;
+  window.scrollTo(0, 0);
+  document.getElementById('again').onclick = () => startInput(themeId);
   document.getElementById('home').onclick = renderHome;
 }
 
