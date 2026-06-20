@@ -547,9 +547,11 @@ function checkOffline(userText, q) {
 // ИИ-проверка по смыслу через Claude (GET — без CORS-проблем). Возвращает true/false/null.
 function aiCheck(userText, q) {
   if (!ANALYTICS_URL) return Promise.resolve(null);
+  const tok = (window.SNIPING_CONFIG && window.SNIPING_CONFIG.checkToken) || '';
   const url = ANALYTICS_URL + '?checkq=' + encodeURIComponent(q.q)
     + '&checkc=' + encodeURIComponent(q.options[q.correct])
-    + '&checka=' + encodeURIComponent(userText);
+    + '&checka=' + encodeURIComponent(userText)
+    + '&t=' + encodeURIComponent(tok);
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), 8000);
   return fetch(url, { signal: ctrl.signal })
