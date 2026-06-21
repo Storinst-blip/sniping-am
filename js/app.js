@@ -152,13 +152,13 @@ function renderHome() {
       <div class="btn-title">🔄 Повторение</div>
       <div class="btn-desc">Бесконечный поток вопросов для зубрёжки</div>
     </button>
+    <button class="btn btn-primary" id="input">
+      <div class="btn-title">✍️ Ввод ответа</div>
+      <div class="btn-desc">Пишешь ответ сам — ИИ проверяет по смыслу</div>
+    </button>
     <button class="btn btn-primary" id="cards">
       <div class="btn-title">🃏 Карточки</div>
       <div class="btn-desc">Заучивание: вспомни ответ и проверь себя</div>
-    </button>
-    <button class="btn btn-primary" id="input">
-      <div class="btn-title">✍️ Ввод ответа <span class="beta">бета</span></div>
-      <div class="btn-desc">Пишешь ответ сам — приложение проверяет по смыслу</div>
     </button>
     <button class="btn btn-mistakes" id="mistakes" ${missCount ? '' : 'disabled'}>
       <div class="btn-row"><span class="btn-title">❗ Работа над ошибками</span><span class="count">${missCount}</span></div>
@@ -621,110 +621,28 @@ function aiCheck(userText, q, mode) {
     .catch(() => { clearTimeout(t); return null; });
 }
 
-/* ============ Режим «Ввод ответа» ============ */
+/* ============ Режим «Ввод ответа» (конечный список, с листанием) ============ */
 function startInput(themeId) {
   const pool = themeId == null ? allQuestions() : questionsOfTheme(themeId);
   const questions = shuffle(pool).map(prepareQuestion);
-  S = { mode: 'input', themeId, questions, idx: 0, correct: 0, wrong: 0, locked: false };
-  renderInput();
-}
-
-function renderInput() {
-  const q = S.questions[S.idx];
-  app.innerHTML = `
-    <div class="topbar">
-      <button class="back-btn" id="back">← Меню</button>
-      <span class="progress">${S.idx + 1} / ${S.questions.length} · ✔ ${S.correct}</span>
-    </div>
-    <span class="theme-tag">${esc(q.theme)}</span>
-    <p class="question">${esc(q.q)}</p>
-    <textarea class="answer-input" id="ans" rows="3" placeholder="Напиши ответ своими словами…"
-      autocapitalize="sentences" autocorrect="on"></textarea>
-    <button class="btn btn-primary" id="check"><div class="btn-title">Проверить</div></button>
-    <div id="after"></div>
-  `;
-  document.getElementById('back').onclick = renderHome;
-  const ta = document.getElementById('ans');
-  ta.focus();
-  document.getElementById('check').onclick = () => doCheck(ta.value);
-}
-
-function doCheck(text) {
-  if (S.locked) return;
-  const q = S.questions[S.idx];
-  if (!normalizeText(text)) { document.getElementById('after').innerHTML = '<div class="gate-err">Напиши ответ.</div>'; return; }
-  S.locked = true;
-  document.getElementById('check').style.display = 'none';
-  document.getElementById('ans').disabled = true;
-  document.getElementById('after').innerHTML = '<div class="gate-hint">Проверяю по смыслу… ⚡</div>';
-  // ИИ-проверка приоритетна; оффлайн — резерв, если нет сети
-  aiCheck(text, q, 'input').then(res => {
-    if (res) return showVerdict(res.correct, 'ai', res.reason);
-    const off = checkOffline(text, q);
-    if (off === 'yes') return showVerdict(true, 'offline');
-    if (off === 'no') return showVerdict(false, 'offline');
-    showSelfAssess(); // и ИИ, и оффлайн не дали ответа — самооценка
-  });
-}
-
-function showVerdict(ok, by, reason) {
-  const q = S.questions[S.idx];
-  if (ok) S.correct++; else S.wrong++;
-  const p = loadProgress();
-  recordInto(p, q.id, ok);
-  saveProgress(p);
-  logEvent('input', q.themeId, q.id, ok);
-  const tag = by === 'ai' ? ' <span class="by-ai">⚡ИИ</span>' : '';
-  const aiReason = reason ? `<div class="explain coach">👨‍🏫 ${esc(reason)}</div>` : '';
-  document.getElementById('after').innerHTML = `
-    <div class="feedback ${ok ? 'ok' : 'no'}">${ok ? '✔ Верно!' : '✗ Неверно'}${tag}</div>
-    ${aiReason}
-    <div class="explain"><b>Эталон.</b> ${esc(q.options[q.correct])}${q.explanation ? '<br><br>💡 ' + esc(q.explanation) : ''}</div>
-    <button class="btn btn-primary" id="next"><div class="btn-title">${S.idx === S.questions.length - 1 ? 'Завершить' : 'Дальше →'}</div></button>
-  `;
-  document.getElementById('next').onclick = nextInput;
-}
-
-function showSelfAssess() {
-  const q = S.questions[S.idx];
-  document.getElementById('after').innerHTML = `
-    <div class="feedback">🤔 Сравни сам с эталоном:</div>
-    <div class="explain"><b>Эталон.</b> ${esc(q.options[q.correct])}${q.explanation ? '<br><br>💡 ' + esc(q.explanation) : ''}</div>
-    <div class="nav-row">
-      <button class="btn nav-btn card-no" id="sno"><div class="btn-title">Не верно</div></button>
-      <button class="btn nav-btn card-yes" id="syes"><div class="btn-title">Верно</div></button>
-    </div>
-  `;
-  document.getElementById('syes').onclick = () => selfAssess(true);
-  document.getElementById('sno').onclick = () => selfAssess(false);
-}
-function selfAssess(ok) {
-  const q = S.questions[S.idx];
-  if (ok) S.correct++; else S.wrong++;
-  const p = loadProgress();
-  recordInto(p, q.id, ok);
-  saveProgress(p);
-  logEvent('input', q.themeId, q.id, ok);
-  nextInput();
-}
-
-function nextInput() {
-  S.locked = false;
-  S.idx++;
-  if (S.idx >= S.questions.length) finishInput();
-  else renderInput();
+  questions.forEach(q => { q.kind = 'input'; }); // все вопросы — ввод текста
+  S = { mode: 'input', themeId: themeId, questions, answers: new Array(questions.length).fill(null), idx: 0 };
+  renderQuestion(); // kind==='input' → renderQuestionInput (общий движок с листанием)
 }
 
 function finishInput() {
   flushQueue();
-  const total = S.correct + S.wrong;
-  const pct = total ? Math.round(S.correct / total * 100) : 0;
+  let correct = 0, answered = 0;
+  S.answers.forEach(a => { if (a && typeof a === 'object') { answered++; if (a.correct) correct++; } });
+  const wrong = answered - correct;
+  const total = S.questions.length;
+  const pct = answered ? Math.round(correct / answered * 100) : 0;
   const themeId = S.themeId;
   app.innerHTML = `
     <h1 class="app-title">Ввод ответа</h1>
-    <div class="result-score">${S.correct}/${total}</div>
+    <div class="result-score">${correct}/${total}</div>
     <div class="result-pct">${pct}% верно</div>
-    <p class="result-line">${S.wrong === 0 ? '🔥 Всё верно!' : `Неверно: ${S.wrong} — попали в «Работу над ошибками»`}</p>
+    <p class="result-line">${wrong === 0 ? '🔥 Всё верно!' : `Неверно: ${wrong} — попали в «Работу над ошибками»`}</p>
     <button class="btn btn-primary" id="again"><div class="btn-title">↻ Ещё раз</div></button>
     <button class="btn" id="home"><div class="btn-title">← В меню</div></button>
   `;
@@ -863,9 +781,10 @@ function renderQuestionInput() {
 
   const timerHtml = (isExam && S.timeLeft != null)
     ? ` · <span class="timer ${S.timeLeft <= 30 ? 'low' : ''}" id="timer">⏱ ${fmtTime(Math.max(0, S.timeLeft))}</span>` : '';
-  const topRight = S.mode === 'practice'
-    ? `✔ ${correctCount()} / ${answeredCount()}`
-    : `Вопрос ${S.idx + 1} / ${S.questions.length}${timerHtml}`;
+  let topRight;
+  if (S.mode === 'practice') topRight = `✔ ${correctCount()} / ${answeredCount()}`;
+  else if (S.mode === 'input') topRight = `Вопрос ${S.idx + 1} / ${S.questions.length} · ✔ ${correctCount()}`;
+  else topRight = `Вопрос ${S.idx + 1} / ${S.questions.length}${timerHtml}`;
   const bar = S.mode === 'practice' ? '' :
     `<div class="progress-bar"><span style="width:${Math.round((S.idx) / S.questions.length * 100)}%"></span></div>`;
   const backLabel = isExam ? '← Выход' : '← Меню';
@@ -893,6 +812,11 @@ function renderQuestionInput() {
     const id = last ? 'finish' : 'next';
     const label = last ? 'Завершить экзамен' : 'Вперёд →';
     rightBtn = `<button class="btn btn-primary nav-btn" id="${id}" ${answered ? '' : 'disabled'}><div class="btn-title">${label}</div></button>`;
+  } else if (S.mode === 'input') {
+    // ввод ответа: конечный список, «Вперёд/Завершить» доступны после проверки
+    const id = last ? 'finish' : 'next';
+    const label = last ? 'Завершить' : 'Вперёд →';
+    rightBtn = `<button class="btn btn-primary nav-btn" id="${id}" ${checked ? '' : 'disabled'}><div class="btn-title">${label}</div></button>`;
   } else {
     // повторение: «Вперёд» доступна только после проверки
     rightBtn = `<button class="btn btn-primary nav-btn" id="next" ${checked ? '' : 'disabled'}><div class="btn-title">Вперёд →</div></button>`;
@@ -932,25 +856,25 @@ function renderQuestionInput() {
     };
   }
   const pc = document.getElementById('pcheck');
-  if (pc && ta) pc.onclick = () => doCheckPractice(ta.value);
+  if (pc && ta) pc.onclick = () => doCheckText(ta.value);
 }
 
-// Проверка ответа с вводом в повторении (ИИ → оффлайн → самооценка), затем показываем разбор сразу.
-function doCheckPractice(text) {
+// Проверка введённого текста (повторение и «Ввод ответа»): ИИ → оффлайн → самооценка, разбор сразу.
+function doCheckText(text) {
   const q = S.questions[S.idx];
   if (!normalizeText(text)) { document.getElementById('pafter').innerHTML = '<div class="gate-err">Напиши ответ.</div>'; return; }
   const ta = document.getElementById('examans'); if (ta) ta.disabled = true;
   const pc = document.getElementById('pcheck'); if (pc) pc.style.display = 'none';
   document.getElementById('pafter').innerHTML = '<div class="gate-hint">Проверяю по смыслу… ⚡</div>';
-  aiCheck(text, q, 'practice').then(res => {
-    if (res) return commitPractice(text, res.correct, res.reason, 'ai');
+  aiCheck(text, q, S.mode).then(res => { // mode = 'practice' | 'input' → пишется в лог inputs
+    if (res) return commitText(text, res.correct, res.reason, 'ai');
     const off = checkOffline(text, q);
-    if (off === 'yes') return commitPractice(text, true, '', 'offline');
-    if (off === 'no') return commitPractice(text, false, '', 'offline');
-    practiceSelfAssess(text); // ни ИИ, ни оффлайн не дали ответа
+    if (off === 'yes') return commitText(text, true, '', 'offline');
+    if (off === 'no') return commitText(text, false, '', 'offline');
+    selfAssessText(text); // ни ИИ, ни оффлайн не дали ответа
   });
 }
-function practiceSelfAssess(text) {
+function selfAssessText(text) {
   const q = S.questions[S.idx];
   document.getElementById('pafter').innerHTML = `
     <div class="feedback">🤔 Сравни сам с эталоном:</div>
@@ -959,14 +883,14 @@ function practiceSelfAssess(text) {
       <button class="btn nav-btn card-no" id="psno"><div class="btn-title">Не верно</div></button>
       <button class="btn nav-btn card-yes" id="psyes"><div class="btn-title">Верно</div></button>
     </div>`;
-  document.getElementById('psyes').onclick = () => commitPractice(text, true, '', 'self');
-  document.getElementById('psno').onclick = () => commitPractice(text, false, '', 'self');
+  document.getElementById('psyes').onclick = () => commitText(text, true, '', 'self');
+  document.getElementById('psno').onclick = () => commitText(text, false, '', 'self');
 }
-function commitPractice(text, correct, reason, by) {
+function commitText(text, correct, reason, by) {
   const q = S.questions[S.idx];
   S.answers[S.idx] = { text: text, correct: correct, reason: reason || '', by: by };
   const p = loadProgress(); recordInto(p, q.id, correct); saveProgress(p);
-  logEvent('practice', q.themeId, q.id, correct);
+  logEvent(S.mode, q.themeId, q.id, correct);
   renderQuestionInput();
 }
 
@@ -1007,7 +931,7 @@ function goNext() {
     renderQuestion();
     return;
   }
-  // exam / theme
+  // exam / theme / input / mistakes
   if (S.idx < S.questions.length - 1) {
     S.idx++;
     if (S.mode === 'theme') saveSession();
@@ -1015,6 +939,7 @@ function goNext() {
   } else {
     if (S.mode === 'exam') finishExam();
     else if (S.mode === 'theme') finishTheme();
+    else if (S.mode === 'input') finishInput();
     else finishMistakes();
   }
 }
