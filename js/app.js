@@ -753,7 +753,7 @@ function aiCheck(userText, q, mode) {
     + '&questionId=' + encodeURIComponent(q.id != null ? q.id : '')
     + '&t=' + encodeURIComponent(tok);
   const ctrl = new AbortController();
-  const t = setTimeout(() => ctrl.abort(), 8000);
+  const t = setTimeout(() => ctrl.abort(), 20000); // запас: ИИ-проверка обычно ~5с, но бывает дольше при параллельных запросах
   return fetch(url, { signal: ctrl.signal })
     .then(r => r.json())
     .then(d => { clearTimeout(t); return (d && typeof d.correct === 'boolean') ? { correct: d.correct, reason: d.reason || '' } : null; })
@@ -1197,7 +1197,7 @@ function renderExamResults() {
     <p class="result-line">${headline}</p>
     <button class="btn btn-primary" id="again"><div class="btn-title">🎯 Новый экзамен</div></button>
     <button class="btn" id="home"><div class="btn-title">← В меню</div></button>
-    <div class="section-label">Разбор (✔ верно · ✗ ошибка)</div>
+    <div class="section-label">Разбор по вопросам</div>
     ${reviewHtml}
   `;
   window.scrollTo(0, 0);
