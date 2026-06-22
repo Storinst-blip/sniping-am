@@ -1005,12 +1005,14 @@ function renderQuestionInput() {
 function doCheckText(text) {
   const q = S.questions[S.idx];
   if (!normalizeText(text)) { document.getElementById('pafter').innerHTML = '<div class="gate-err">Напиши ответ.</div>'; return; }
-  const sess = S; // фиксируем сессию: если уйдёшь с экрана за время проверки — не трогаем чужой S
+  const sess = S, idx = S.idx; // фиксируем сессию и номер вопроса на момент проверки
   const ta = document.getElementById('examans'); if (ta) ta.disabled = true;
   const pc = document.getElementById('pcheck'); if (pc) pc.style.display = 'none';
+  // блокируем навигацию на время анализа, чтобы вердикт не «переехал» на другой вопрос
+  ['prev', 'next', 'finish'].forEach(id => { const el = document.getElementById(id); if (el) el.disabled = true; });
   document.getElementById('pafter').innerHTML = '<div class="gate-hint">Проверяю по смыслу… ⚡</div>';
   aiCheck(text, q, S.mode).then(res => { // mode = 'practice' | 'input' → пишется в лог inputs
-    if (S !== sess) return; // сессия сменилась (ушли в меню/обновили) — игнорируем результат
+    if (S !== sess || S.idx !== idx) return; // ушли с вопроса/сессии — результат не трогаем
     if (res) return commitText(text, res.correct, res.reason, 'ai');
     const off = checkOffline(text, q);
     if (off === 'yes') return commitText(text, true, '', 'offline');
