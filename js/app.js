@@ -1241,17 +1241,19 @@ Promise.all([
   .catch(err => { app.innerHTML = `<div class="loading">Ошибка загрузки вопросов:<br>${esc(err.message)}</div>`; });
 
 if ('serviceWorker' in navigator) {
+  // при активации нового SW (он делает skipWaiting+claim) — один раз перезагружаемся на свежую версию
+  let swRefreshed = false;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (swRefreshed) return; swRefreshed = true; location.reload();
+  });
   window.addEventListener('load', () => {
     navigator.serviceWorker.register('./sw.js').then(reg => {
-      // авто-обновление: как только новая версия установилась — перезагружаемся на неё
-      reg.addEventListener('updatefound', () => {
-        const nw = reg.installing;
-        if (!nw) return;
-        nw.addEventListener('statechange', () => {
-          // только если уже был активный SW (это ОБНОВЛЕНИЕ, а не первая установка)
-          if (nw.state === 'installed' && navigator.serviceWorker.controller) location.reload();
-        });
-      });
+      reg.update(); // принудительно проверять обновление при каждом заходе
+      const watch = sw => { if (!sw) return; sw.addEventListener('statechange', () => {
+        if (sw.state === 'installed' && navigator.serviceWorker.controller) location.reload();
+      }); };
+      watch(reg.installing);
+      reg.addEventListener('updatefound', () => watch(reg.installing));
     }).catch(() => {});
   });
 }
