@@ -26,6 +26,7 @@ function saveQueue(q) { try { localStorage.setItem('aq', JSON.stringify(q)); } c
 
 // записать событие-ответ в очередь; батчем уходит на сервер
 function logEvent(mode, themeId, questionId, correct) {
+  if (mode !== 'ticket') recordStat(themeId, correct); // локальный прогресс по реальным темам (билеты — нет)
   if (!ANALYTICS_URL) return;
   const q = loadQueue();
   q.push({ name: USER || getUser(), mode: mode, themeId: themeId, questionId: questionId, correct: correct ? 1 : 0 });
@@ -142,12 +143,47 @@ function findItemById(id) {
   return null;
 }
 
+// ----- агрегат активности по темам (для «Мой прогресс») -----
+// p.stats[themeId] = { a: всего ответов, c: верных }
+function recordStat(themeId, correct) {
+  if (themeId == null) return;
+  const p = loadProgress();
+  if (!p.stats) p.stats = {};
+  const k = String(themeId);
+  const s = p.stats[k] || { a: 0, c: 0 };
+  s.a++; if (correct) s.c++;
+  p.stats[k] = s;
+  saveProgress(p);
+}
+
+// ----- закладки «трудные вопросы» -----
+function isMarked(p, id) { return !!(p.marks && p.marks[id]); }
+function markIds(p) { return Object.keys(p.marks || {}); }
+function toggleMark(id) {
+  const p = loadProgress();
+  if (!p.marks) p.marks = {};
+  if (p.marks[id]) delete p.marks[id]; else p.marks[id] = 1;
+  saveProgress(p);
+  return !!p.marks[id];
+}
+// кнопка-звёздочка для шапки вопроса (тоггл закладки без перерисовки экрана)
+function starHtml(qid) {
+  const on = isMarked(loadProgress(), qid);
+  return `<button class="star-btn ${on ? 'on' : ''}" id="star" title="Трудный вопрос — в закладки">${on ? '⭐' : '☆'}</button>`;
+}
+function wireStar(qid) {
+  const s = document.getElementById('star');
+  if (!s) return;
+  s.onclick = () => { const on = toggleMark(qid); s.textContent = on ? '⭐' : '☆'; s.classList.toggle('on', on); };
+}
+
 /* ============ Главное меню ============ */
 function renderHome() {
   S = null;
   const prog = loadProgress();
   const doneCount = DATA.themes.filter(t => themeStats(t, prog).done).length;
   const missCount = mistakeIds(prog).length;
+  const markCount = markIds(prog).length;
   const total = DATA.themes.reduce((s, t) => s + t.questions.length, 0);
   app.innerHTML = `
     <img class="brand-logo" src="./icons/logo.png" alt="Логотип">
@@ -181,6 +217,14 @@ function renderHome() {
       <div class="btn-row"><span class="btn-title">❗ Работа над ошибками</span><span class="count">${missCount}</span></div>
       <div class="btn-desc">${missCount ? 'Вопросы, где ты чаще всего ошибаешься' : 'Пока ошибок нет — копятся по мере прохождения'}</div>
     </button>
+    <button class="btn btn-mistakes" id="bookmarks" ${markCount ? '' : 'disabled'}>
+      <div class="btn-row"><span class="btn-title">⭐ Трудные вопросы</span><span class="count">${markCount}</span></div>
+      <div class="btn-desc">${markCount ? 'Вопросы, отмеченные звёздочкой' : 'Отмечай ⭐ трудные вопросы — они соберутся здесь'}</div>
+    </button>
+    <button class="btn" id="progress">
+      <div class="btn-title">📊 Мой прогресс</div>
+      <div class="btn-desc">Статистика по темам и слабые места</div>
+    </button>
     <p class="footnote">Вошёл как <b>${esc(USER || '—')}</b> · <span class="link-btn" id="rename">сменить</span> · <span class="link-btn" id="adminlink">админ</span></p>
   `;
   document.getElementById('exam').onclick = renderExamSetup;
@@ -190,6 +234,8 @@ function renderHome() {
   document.getElementById('cards').onclick = renderCardsMenu;
   document.getElementById('input').onclick = renderInputMenu;
   if (missCount) document.getElementById('mistakes').onclick = startMistakes;
+  if (markCount) document.getElementById('bookmarks').onclick = startBookmarks;
+  document.getElementById('progress').onclick = renderMyProgress;
   document.getElementById('rename').onclick = () => renderNameGate(true);
   document.getElementById('adminlink').onclick = renderAdminLogin;
 }
@@ -512,6 +558,7 @@ function renderCard() {
     <div class="topbar">
       <button class="back-btn" id="back">← Меню</button>
       <span class="progress">${S.idx + 1} / ${S.questions.length} · 😎 ${S.known} 😕 ${S.unknown}</span>
+      ${starHtml(q.id)}
     </div>
     ${face}
     ${S.flipped ? `
@@ -521,6 +568,7 @@ function renderCard() {
       </div>` : ''}
   `;
   document.getElementById('back').onclick = renderHome;
+  wireStar(q.id);
   if (!S.flipped) {
     document.getElementById('card').onclick = () => { S.flipped = true; renderCard(); };
   } else {
@@ -896,6 +944,7 @@ function renderQuestion() {
     <div class="topbar">
       <button class="back-btn" id="back">${backLabel}</button>
       <span class="progress">${topRight}</span>
+      ${starHtml(q.id)}
     </div>
     ${bar}
     <span class="theme-tag">${esc(q.theme)}</span>
@@ -909,6 +958,7 @@ function renderQuestion() {
   `;
 
   document.getElementById('back').onclick = onBack;
+  wireStar(q.id);
   app.querySelectorAll('.option').forEach(b => { b.onclick = () => selectOption(Number(b.dataset.i)); });
   const prev = document.getElementById('prev'); if (prev) prev.onclick = goPrev;
   const next = document.getElementById('next'); if (next) next.onclick = goNext;
@@ -970,6 +1020,7 @@ function renderQuestionInput() {
     <div class="topbar">
       <button class="back-btn" id="back">${backLabel}</button>
       <span class="progress">${topRight}</span>
+      ${starHtml(q.id)}
     </div>
     ${bar}
     <span class="theme-tag">✍️ ${esc(q.theme)}</span>
@@ -986,6 +1037,7 @@ function renderQuestionInput() {
   `;
 
   document.getElementById('back').onclick = onBack;
+  wireStar(q.id);
   const ta = document.getElementById('examans');
   const prevB = document.getElementById('prev'); if (prevB && !prevDisabled) prevB.onclick = goPrev;
   const nextB = document.getElementById('next'); if (nextB) nextB.onclick = goNext;
@@ -1088,6 +1140,7 @@ function goNext() {
     if (S.mode === 'exam') finishExam();
     else if (S.mode === 'theme') finishTheme();
     else if (S.mode === 'input') finishInput();
+    else if (S.mode === 'bookmarks') finishBookmarks();
     else finishMistakes();
   }
 }
@@ -1232,6 +1285,101 @@ function finishMistakes() {
   window.scrollTo(0, 0);
   if (left) document.getElementById('again').onclick = startMistakes;
   document.getElementById('home').onclick = renderHome;
+}
+
+/* ============ Режим «Трудные вопросы» (закладки) ============ */
+function startBookmarks() {
+  const prog = loadProgress();
+  const items = markIds(prog).map(findItemById).filter(Boolean);
+  if (!items.length) { renderHome(); return; }
+  const questions = shuffle(items).map(prepareQuestion);
+  S = { mode: 'bookmarks', questions, answers: new Array(questions.length).fill(null), idx: 0 };
+  renderQuestion();
+}
+
+function finishBookmarks() {
+  const total = S.questions.length;
+  const correct = correctCount();
+  const pct = Math.round(correct / total * 100);
+  const left = markIds(loadProgress()).length;
+  flushQueue();
+  app.innerHTML = `
+    <h1 class="app-title">Трудные вопросы</h1>
+    <div class="result-score">${correct}/${total}</div>
+    <div class="result-pct">${pct}% правильных</div>
+    <p class="result-line">В закладках: ${left}. Снять звёздочку можно прямо на вопросе.</p>
+    <button class="btn btn-primary" id="again" ${left ? '' : 'disabled'}><div class="btn-title">↻ Ещё раз</div></button>
+    <button class="btn" id="home"><div class="btn-title">← В меню</div></button>
+  `;
+  window.scrollTo(0, 0);
+  if (left) document.getElementById('again').onclick = startBookmarks;
+  document.getElementById('home').onclick = renderHome;
+}
+
+/* ============ Экран «Мой прогресс» ============ */
+function renderMyProgress() {
+  S = null;
+  const prog = loadProgress();
+  const stats = prog.stats || {};
+  let totA = 0, totC = 0;
+  DATA.themes.forEach(t => { const s = stats[String(t.id)]; if (s) { totA += s.a; totC += s.c; } });
+  const totalPct = totA ? Math.round(totC / totA * 100) : 0;
+  const doneCount = DATA.themes.filter(t => themeStats(t, prog).done).length;
+  const perfectCount = DATA.themes.filter(t => prog.perfect && prog.perfect[t.id]).length;
+  const missCount = mistakeIds(prog).length;
+  const markCount = markIds(prog).length;
+
+  // разбивка по темам
+  const themesHtml = DATA.themes.map(t => {
+    const s = themeStats(t, prog);
+    const st = stats[String(t.id)] || { a: 0, c: 0 };
+    const pct = st.a ? Math.round(st.c / st.a * 100) : null;
+    const solvedPct = Math.round(s.solved / s.total * 100);
+    return `
+      <div class="prog-theme">
+        <div class="btn-row">
+          <span class="prog-name">${t.id}. ${esc(t.title)} ${s.perfect ? '🏅' : ''}</span>
+          <span class="count">${pct === null ? '—' : pct + '%'}</span>
+        </div>
+        <div class="mini-bar"><span style="width:${solvedPct}%"></span></div>
+        <div class="prog-sub">освоено ${s.solved}/${s.total}${st.a ? ` · ответов ${st.a}` : ''}</div>
+      </div>`;
+  }).join('');
+
+  // слабые темы: ответов ≥3 и <60% верных, топ-3
+  const weak = DATA.themes
+    .map(t => ({ t, st: stats[String(t.id)] || { a: 0, c: 0 } }))
+    .filter(x => x.st.a >= 3 && (x.st.c / x.st.a) < 0.6)
+    .sort((a, b) => (a.st.c / a.st.a) - (b.st.c / b.st.a))
+    .slice(0, 3);
+  const weakHtml = weak.length
+    ? `<div class="section-label">Стоит повторить</div>` + weak.map(x =>
+        `<div class="prog-weak">⚠️ ${x.t.id}. ${esc(x.t.title)} — ${Math.round(x.st.c / x.st.a * 100)}% верных</div>`).join('')
+    : '';
+
+  app.innerHTML = `
+    <div class="topbar"><button class="back-btn" id="back">← Меню</button><h2>Мой прогресс</h2></div>
+    <div class="prog-summary">
+      <div class="prog-big">${totalPct}%</div>
+      <div class="prog-sub">верных ответов · всего отвечено ${totA}</div>
+      <div class="prog-row">📚 Тем освоено: <b>${doneCount}/${DATA.themes.length}</b> · 🏅 ${perfectCount}</div>
+      <div class="prog-row">❗ В работе над ошибками: <b>${missCount}</b> · ⭐ В закладках: <b>${markCount}</b></div>
+    </div>
+    ${weakHtml}
+    <div class="section-label">По темам (% верных)</div>
+    ${themesHtml}
+    <button class="btn reset-btn" id="reset"><div class="btn-title">↺ Сбросить весь прогресс</div></button>
+  `;
+  window.scrollTo(0, 0);
+  document.getElementById('back').onclick = renderHome;
+  document.getElementById('reset').onclick = () => {
+    if (confirm('Сбросить весь прогресс, ошибки и закладки?')) {
+      saveProgress({ solved: {}, perfect: {} });
+      DATA.themes.forEach(t => { clearSession(t.id); clearSessionInput(t.id); });
+      clearSessionInput(null);
+      renderMyProgress();
+    }
+  };
 }
 
 /* ============ Загрузка ============ */

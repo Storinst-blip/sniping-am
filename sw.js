@@ -1,5 +1,5 @@
 // Service Worker — офлайн-кэш. При обновлении контента поднимай версию CACHE.
-const CACHE = 'sniper-v28';
+const CACHE = 'sniper-v29';
 const ASSETS = [
   './',
   './index.html',
