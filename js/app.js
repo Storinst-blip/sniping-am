@@ -95,18 +95,30 @@ function themeStats(t, prog) {
   return { solved, total, done: solved === total, perfect: !!prog.perfect[t.id] };
 }
 function sessKey(themeId) { return 'sess_t' + themeId; }
+function sessKeyInput(themeId) { return 'sess_i' + (themeId == null ? 'all' : themeId); } // «Ввод ответа», в т.ч. «все темы»
 function hasSession(themeId) { try { return !!localStorage.getItem(sessKey(themeId)); } catch (e) { return false; } }
-function saveSession() {
-  if (!S || S.mode !== 'theme') return;
-  try { localStorage.setItem(sessKey(S.themeId), JSON.stringify({ questions: S.questions, answers: S.answers, idx: S.idx })); } catch (e) {}
+function hasSessionInput(themeId) { try { return !!localStorage.getItem(sessKeyInput(themeId)); } catch (e) { return false; } }
+function curSessKey() {
+  if (!S) return null;
+  if (S.mode === 'theme') return sessKey(S.themeId);
+  if (S.mode === 'input') return sessKeyInput(S.themeId);
+  return null;
 }
-function loadSession(themeId) {
+function saveSession() {
+  const key = curSessKey();
+  if (!key) return;
+  try { localStorage.setItem(key, JSON.stringify({ questions: S.questions, answers: S.answers, idx: S.idx })); } catch (e) {}
+}
+function readSession(key) {
   try {
-    const s = JSON.parse(localStorage.getItem(sessKey(themeId)));
+    const s = JSON.parse(localStorage.getItem(key));
     return (s && Array.isArray(s.questions) && s.questions.length) ? s : null;
   } catch (e) { return null; }
 }
+function loadSession(themeId) { return readSession(sessKey(themeId)); }
+function loadSessionInput(themeId) { return readSession(sessKeyInput(themeId)); }
 function clearSession(themeId) { try { localStorage.removeItem(sessKey(themeId)); } catch (e) {} }
+function clearSessionInput(themeId) { try { localStorage.removeItem(sessKeyInput(themeId)); } catch (e) {} }
 
 // ----- статистика ошибок (для «Работы над ошибками») -----
 // p.miss[id] = { w: всего ошибок, streak: верных ответов подряд после последней ошибки }
@@ -549,16 +561,29 @@ function finishCards() {
 }
 
 /* ============ Меню «Ввод ответа» ============ */
+// прогресс сохранённой сессии ввода: сколько проверено из скольки
+function inputSessProgress(themeId) {
+  const s = readSession(sessKeyInput(themeId));
+  if (!s) return null;
+  const answered = s.answers.filter(a => a && typeof a === 'object').length;
+  return { answered: answered, total: s.questions.length };
+}
 function renderInputMenu() {
   S = null;
-  const themesHtml = DATA.themes.map(t => `
-    <button class="btn" data-theme="${t.id}">
-      <div class="btn-row"><span class="btn-title">${t.id}. ${esc(t.title)}</span><span class="count">${t.questions.length}</span></div>
-    </button>`).join('');
+  const themeBtn = (id, title, count, cls) => {
+    const p = inputSessProgress(id);
+    const resume = p ? `<span class="badge" title="можно продолжить">⏸ ${p.answered}/${p.total}</span>` : '';
+    return `
+      <button class="btn ${cls || ''}" data-theme="${id == null ? 'all' : id}">
+        <div class="btn-row"><span class="btn-title">${title} ${resume}</span><span class="count">${count}</span></div>
+      </button>`;
+  };
+  const allCount = DATA.themes.reduce((s, t) => s + t.questions.length, 0);
+  const themesHtml = DATA.themes.map(t => themeBtn(t.id, `${t.id}. ${esc(t.title)}`, t.questions.length, '')).join('');
   app.innerHTML = `
     <div class="topbar"><button class="back-btn" id="back">← Меню</button><h2>Ввод ответа</h2></div>
-    <div class="mode-desc">✍️ Пишешь ответ своими словами — приложение проверяет по смыслу (не обязательно дословно). Спорные случаи можно зачесть самому.</div>
-    <button class="btn btn-primary" data-theme="all"><div class="btn-title">🔁 Все темы</div></button>
+    <div class="mode-desc">✍️ Пишешь ответ своими словами — ИИ проверяет по смыслу. Можно листать вопросы и продолжить с того места, где остановился (⏸).</div>
+    ${themeBtn(null, '🔁 Все темы', allCount, 'btn-primary')}
     <div class="section-label">Или выбери тему</div>
     ${themesHtml}
   `;
@@ -736,15 +761,22 @@ function aiCheck(userText, q, mode) {
 }
 
 /* ============ Режим «Ввод ответа» (конечный список, с листанием) ============ */
-function startInput(themeId) {
+function startInput(themeId, fresh) {
+  if (!fresh) {
+    const s = loadSessionInput(themeId); // продолжить с того места, где закончил
+    if (s) { S = { mode: 'input', themeId: themeId, questions: s.questions, answers: s.answers, idx: s.idx }; renderQuestion(); return; }
+  }
   const pool = themeId == null ? allQuestions() : questionsOfTheme(themeId);
   const questions = shuffle(pool).map(prepareQuestion);
   questions.forEach(q => { q.kind = 'input'; }); // все вопросы — ввод текста
   S = { mode: 'input', themeId: themeId, questions, answers: new Array(questions.length).fill(null), idx: 0 };
+  clearSessionInput(themeId);
+  saveSession();
   renderQuestion(); // kind==='input' → renderQuestionInput (общий движок с листанием)
 }
 
 function finishInput() {
+  clearSessionInput(S.themeId);
   flushQueue();
   let correct = 0, answered = 0;
   S.answers.forEach(a => { if (a && typeof a === 'object') { answered++; if (a.correct) correct++; } });
@@ -761,7 +793,7 @@ function finishInput() {
     <button class="btn" id="home"><div class="btn-title">← В меню</div></button>
   `;
   window.scrollTo(0, 0);
-  document.getElementById('again').onclick = () => startInput(themeId);
+  document.getElementById('again').onclick = () => startInput(themeId, true);
   document.getElementById('home').onclick = renderHome;
 }
 
@@ -850,13 +882,15 @@ function renderQuestion() {
     ? `<div class="explain"><b>Пояснение.</b> ${esc(q.explanation)}</div>` : '';
   const fb = reveal ? `<div class="feedback ${ans === q.correct ? 'ok' : 'no'}">${ans === q.correct ? '✔ Верно!' : '✗ Неверно'}</div>` : '';
 
-  // правая кнопка навигации
+  // правая кнопка навигации (в темах/ошибках можно листать вперёд свободно)
+  const freeNav = (S.mode === 'theme' || S.mode === 'mistakes');
+  const navOk = answered || freeNav;
   let rightBtn;
   if (last) {
-    rightBtn = `<button class="btn btn-primary nav-btn" id="finish" ${answered ? '' : 'disabled'}>
+    rightBtn = `<button class="btn btn-primary nav-btn" id="finish" ${navOk ? '' : 'disabled'}>
       <div class="btn-title">${S.mode === 'exam' ? 'Завершить экзамен' : 'Завершить тему'}</div></button>`;
   } else {
-    rightBtn = `<button class="btn btn-primary nav-btn" id="next" ${answered ? '' : 'disabled'}>
+    rightBtn = `<button class="btn btn-primary nav-btn" id="next" ${navOk ? '' : 'disabled'}>
       <div class="btn-title">Вперёд →</div></button>`;
   }
 
@@ -888,8 +922,9 @@ function renderQuestionInput() {
   const q = S.questions[S.idx];
   const isExam = S.mode === 'exam';
   const stored = S.answers[S.idx];
-  const checked = (!isExam && stored && typeof stored === 'object') ? stored : null; // practice: уже проверено
-  const textVal = isExam ? (typeof stored === 'string' ? stored : '') : (checked ? checked.text : '');
+  const checked = (!isExam && stored && typeof stored === 'object') ? stored : null; // уже проверено (объект-вердикт)
+  // текст: проверенный ответ, либо черновик-строка (сохраняется по ходу ввода), либо пусто
+  const textVal = checked ? checked.text : (typeof stored === 'string' ? stored : '');
   const answered = isExam ? (textVal.trim() !== '') : !!checked;
   const last = S.mode !== 'practice' && S.idx === S.questions.length - 1;
 
@@ -927,10 +962,10 @@ function renderQuestionInput() {
     const label = last ? 'Завершить экзамен' : 'Вперёд →';
     rightBtn = `<button class="btn btn-primary nav-btn" id="${id}" ${answered ? '' : 'disabled'}><div class="btn-title">${label}</div></button>`;
   } else if (S.mode === 'input') {
-    // ввод ответа: конечный список, «Вперёд/Завершить» доступны после проверки
+    // ввод ответа: конечный список со свободным листанием вперёд (можно пропускать)
     const id = last ? 'finish' : 'next';
     const label = last ? 'Завершить' : 'Вперёд →';
-    rightBtn = `<button class="btn btn-primary nav-btn" id="${id}" ${checked ? '' : 'disabled'}><div class="btn-title">${label}</div></button>`;
+    rightBtn = `<button class="btn btn-primary nav-btn" id="${id}"><div class="btn-title">${label}</div></button>`;
   } else {
     // повторение: «Вперёд» доступна только после проверки
     rightBtn = `<button class="btn btn-primary nav-btn" id="next" ${checked ? '' : 'disabled'}><div class="btn-title">Вперёд →</div></button>`;
@@ -961,12 +996,15 @@ function renderQuestionInput() {
   const nextB = document.getElementById('next'); if (nextB) nextB.onclick = goNext;
   const finB = document.getElementById('finish'); if (finB) finB.onclick = goNext;
 
-  if (isExam && ta) {
+  if (ta && !checked) {
     ta.oninput = () => {
-      S.answers[S.idx] = ta.value;
-      const has = ta.value.trim() !== '';
-      const nb = document.getElementById('next'); if (nb) nb.disabled = !has;
-      const fb = document.getElementById('finish'); if (fb) fb.disabled = !has;
+      S.answers[S.idx] = ta.value; // черновик/ответ сохраняем по ходу ввода
+      if (isExam) { // в экзамене «Вперёд/Завершить» доступны только при непустом тексте
+        const has = ta.value.trim() !== '';
+        const nb = document.getElementById('next'); if (nb) nb.disabled = !has;
+        const fb = document.getElementById('finish'); if (fb) fb.disabled = !has;
+      }
+      saveSession(); // resume для «Ввода ответа» (no-op для practice/exam)
     };
   }
   const pc = document.getElementById('pcheck');
@@ -977,10 +1015,12 @@ function renderQuestionInput() {
 function doCheckText(text) {
   const q = S.questions[S.idx];
   if (!normalizeText(text)) { document.getElementById('pafter').innerHTML = '<div class="gate-err">Напиши ответ.</div>'; return; }
+  const sess = S; // фиксируем сессию: если уйдёшь с экрана за время проверки — не трогаем чужой S
   const ta = document.getElementById('examans'); if (ta) ta.disabled = true;
   const pc = document.getElementById('pcheck'); if (pc) pc.style.display = 'none';
   document.getElementById('pafter').innerHTML = '<div class="gate-hint">Проверяю по смыслу… ⚡</div>';
   aiCheck(text, q, S.mode).then(res => { // mode = 'practice' | 'input' → пишется в лог inputs
+    if (S !== sess) return; // сессия сменилась (ушли в меню/обновили) — игнорируем результат
     if (res) return commitText(text, res.correct, res.reason, 'ai');
     const off = checkOffline(text, q);
     if (off === 'yes') return commitText(text, true, '', 'offline');
@@ -1005,12 +1045,14 @@ function commitText(text, correct, reason, by) {
   S.answers[S.idx] = { text: text, correct: correct, reason: reason || '', by: by };
   const p = loadProgress(); recordInto(p, q.id, correct); saveProgress(p);
   logEvent(S.mode, q.themeId, q.id, correct);
+  saveSession(); // запомнить прогресс «Ввода ответа» (resume)
   renderQuestionInput();
 }
 
 function onBack() {
   if (S.mode === 'exam') { if (confirm('Выйти из экзамена? Результат не сохранится.')) { clearExamTimer(); renderHome(); } }
   else if (S.mode === 'theme') { saveSession(); renderThemeList(); }
+  else if (S.mode === 'input') { saveSession(); renderInputMenu(); } // сохранить место и вернуться к выбору
   else renderHome();
 }
 
@@ -1033,12 +1075,14 @@ function selectOption(i) {
 function goPrev() {
   if (S.idx === 0) return;
   S.idx--;
-  if (S.mode === 'theme') saveSession();
+  saveSession(); // no-op кроме theme/input
   renderQuestion();
 }
 
 function goNext() {
-  if (!qAnswered(S.idx)) return; // вперёд только после ответа (учитывает ввод текста)
+  // в обучающих режимах можно листать вперёд свободно (даже не ответив); экзамен/повторение — только после ответа
+  const freeNav = (S.mode === 'theme' || S.mode === 'input' || S.mode === 'mistakes');
+  if (!freeNav && !qAnswered(S.idx)) return;
   if (S.mode === 'practice') {
     if (S.idx < S.questions.length - 1) S.idx++;
     else { drawPractice(); S.idx++; }
@@ -1048,7 +1092,7 @@ function goNext() {
   // exam / theme / input / mistakes
   if (S.idx < S.questions.length - 1) {
     S.idx++;
-    if (S.mode === 'theme') saveSession();
+    saveSession(); // no-op кроме theme/input
     renderQuestion();
   } else {
     if (S.mode === 'exam') finishExam();
