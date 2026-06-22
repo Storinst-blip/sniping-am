@@ -1186,7 +1186,7 @@ function renderExamResults() {
         ${ok
           ? `<div class="review-a correct-ans">✔ ${esc(q.options[q.correct])}</div>`
           : `<div class="review-a your-wrong">✗ Ты выбрал: ${your === null ? '—' : esc(q.options[your])}</div>
-             <div class="review-a correct-ans">✔ Правильно: ${esc(q.options[q.correct])}</div>
+             <div class="review-a correct-ans">Правильно: ${esc(q.options[q.correct])}</div>
              ${q.explanation ? `<div class="review-expl">${esc(q.explanation)}</div>` : ''}`}
       </div>`;
   }).join('');
